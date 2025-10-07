@@ -1,0 +1,43 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+cv_lab_step1/cv_lab_step1/.venv/
+.venv/
+venv/
+ENV/
+
+# Editors/IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Tools caches
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Project outputs (optional)
+exports/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
