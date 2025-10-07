@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Qt image helpers.
-All comments are in English by request.
 """
 from __future__ import annotations
 from typing import Optional

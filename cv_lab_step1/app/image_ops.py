@@ -5,7 +5,6 @@ Image operations for Step 1:
 - Convert to grayscale (two ways):
   1) Channel averaging (manual RGB mean)
   2) HSV model (use the V channel as brightness)
-All comments are in English by request.
 """
 from __future__ import annotations
 from typing import Tuple

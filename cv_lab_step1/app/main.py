@@ -7,7 +7,6 @@ Functions implemented:
 - Show grayscale via RGB averaging
 - Show grayscale via HSV (V channel)
 UI: minimal PySide6 app with 3 tabs to preview images.
-Comments are in English by request.
 """
 from __future__ import annotations
 import sys
@@ -20,7 +19,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog,
     QLabel, QVBoxLayout, QTabWidget, QMessageBox, QSizePolicy, QStatusBar,
     QScrollArea, QToolBar, QComboBox, QHBoxLayout, QPushButton, QDockWidget,
-    QFormLayout, QSpinBox, QDoubleSpinBox, QCheckBox, QDialog
+    QFormLayout, QSpinBox, QDoubleSpinBox, QCheckBox, QDialog, QSlider
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -50,26 +49,36 @@ class ImageLabel(QLabel):
     def set_cv_image(self, img: np.ndarray):
         pm = cv_to_qpixmap(img)
         self._pixmap = pm
-        if self._fit_to_window:
-            self.setPixmap(pm.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            self.setPixmap(pm)
+        self._apply_pixmap()
 
     def set_fit_to_window(self, enabled: bool):
         """
         When enabled, the image scales to fit available space while keeping aspect ratio.
         """
         self._fit_to_window = bool(enabled)
-        if self._pixmap:
-            if self._fit_to_window:
-                self.setPixmap(self._pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            else:
-                self.setPixmap(self._pixmap)
+        self._apply_pixmap()
+
+    def _apply_pixmap(self):
+        if not self._pixmap:
+            return
+        if self._fit_to_window:
+            # If inside a QScrollArea, scale to its viewport size
+            parent = self.parent()
+            viewport_size = None
+            if parent and hasattr(parent, 'parent'):
+                p2 = parent.parent()
+                if p2 and hasattr(p2, 'viewport'):
+                    vp = p2.viewport()
+                    viewport_size = vp.size()
+            target_size = viewport_size if viewport_size is not None else self.size()
+            self.setPixmap(self._pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.setPixmap(self._pixmap)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._pixmap and self._fit_to_window:
-            self.setPixmap(self._pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self._apply_pixmap()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -81,9 +90,9 @@ class MainWindow(QMainWindow):
         self._gray_hsv: Optional[np.ndarray] = None
         self._tab_image_map: dict[str, np.ndarray] = {}
 
-        # Central tabs
+        # Central tabs (top, more standard UI)
         self.tabs = QTabWidget()
-        self.tabs.setTabPosition(QTabWidget.West)  # vertical tabs on the left
+        self.tabs.setTabPosition(QTabWidget.North)
         self.setCentralWidget(self.tabs)
 
         self.label_original = ImageLabel()
@@ -100,19 +109,19 @@ class MainWindow(QMainWindow):
         self.label_shift = ImageLabel()
         self.label_rotate = ImageLabel()
 
-        self.tabs.addTab(self._wrap(self.label_original), "Original (BGR→RGB)")
-        self.tabs.addTab(self._wrap(self.label_gray_mean), "Gray — mean(R,G,B)")
-        self.tabs.addTab(self._wrap(self.label_gray_hsv), "Gray — HSV (V channel)")
-        self.tabs.addTab(self._wrap(self.label_bin_fixed), "Binarize — Fixed thr=128")
-        self.tabs.addTab(self._wrap(self.label_bin_otsu), "Binarize — Otsu")
-        self.tabs.addTab(self._wrap(self.label_hist_norm), "Normalize")
-        self.tabs.addTab(self._wrap(self.label_hist_eq), "Equalize")
-        self.tabs.addTab(self._wrap(self.label_hist_stretch), "Contrast stretch")
-        self.tabs.addTab(self._wrap(self.label_blur), "Blur — Gaussian (ksize=5)")
-        self.tabs.addTab(self._wrap(self.label_sharpen), "Sharpen — Laplacian")
-        self.tabs.addTab(self._wrap(self.label_edges), "Edges — Sobel")
-        self.tabs.addTab(self._wrap(self.label_shift), "Geometry — Cyclic shift")
-        self.tabs.addTab(self._wrap(self.label_rotate), "Geometry — Rotate center +15°")
+        self.tabs.addTab(self._wrap(self.label_original, "Original (BGR→RGB)"), "Original (BGR→RGB)")
+        self.tabs.addTab(self._wrap(self.label_gray_mean, "Gray — mean(R,G,B)"), "Gray — mean(R,G,B)")
+        self.tabs.addTab(self._wrap(self.label_gray_hsv, "Gray — HSV (V channel)"), "Gray — HSV (V channel)")
+        self.tabs.addTab(self._wrap(self.label_bin_fixed, "Binarize — Fixed thr=128"), "Binarize — Fixed thr=128")
+        self.tabs.addTab(self._wrap(self.label_bin_otsu, "Binarize — Otsu"), "Binarize — Otsu")
+        self.tabs.addTab(self._wrap(self.label_hist_norm, "Normalize"), "Normalize")
+        self.tabs.addTab(self._wrap(self.label_hist_eq, "Equalize"), "Equalize")
+        self.tabs.addTab(self._wrap(self.label_hist_stretch, "Contrast stretch"), "Contrast stretch")
+        self.tabs.addTab(self._wrap(self.label_blur, "Blur — Gaussian (ksize=5)"), "Blur — Gaussian (ksize=5)")
+        self.tabs.addTab(self._wrap(self.label_sharpen, "Sharpen — Laplacian"), "Sharpen — Laplacian")
+        self.tabs.addTab(self._wrap(self.label_edges, "Edges — Sobel"), "Edges — Sobel")
+        self.tabs.addTab(self._wrap(self.label_shift, "Geometry — Cyclic shift"), "Geometry — Cyclic shift")
+        self.tabs.addTab(self._wrap(self.label_rotate, "Geometry — Rotate center +15°"), "Geometry — Rotate center +15°")
         # Histogram is shown on demand via the Parameters panel
 
         # Menu
@@ -124,12 +133,30 @@ class MainWindow(QMainWindow):
         # Status bar
         self.setStatusBar(QStatusBar())
 
-    def _wrap(self, w: QWidget) -> QWidget:
-        # Scrollable container to avoid window growing to image size
+    def _wrap(self, img_label: QLabel, title: str) -> QWidget:
+        # Scrollable container; put title + image in a container that resizes with viewport
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setAlignment(Qt.AlignCenter)
-        scroll.setWidget(w)
+        container = QWidget()
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(12, 12, 12, 12)
+        # Title
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title_lbl.setStyleSheet(
+            "font-size: 15px; font-weight: 600; padding: 4px 8px;"
+            "border-left: 4px solid #2d7eea;"
+        )
+        lay.addWidget(title_lbl)
+        # Image area
+        img_wrap = QWidget()
+        img_wrap.setStyleSheet("background-color: #111; border-radius: 6px;")
+        img_lay = QVBoxLayout(img_wrap)
+        img_lay.setContentsMargins(6, 6, 6, 6)
+        img_lay.addWidget(img_label)
+        lay.addWidget(img_wrap)
+        scroll.setWidget(container)
         return scroll
 
     def _build_menu(self):
@@ -152,11 +179,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(quit_act)
 
         # View menu
-        view_menu = menubar.addMenu("&View")
-        self.act_fit = QAction("Fit to Window", self, checkable=True)
-        self.act_fit.setChecked(True)
-        self.act_fit.toggled.connect(self._toggle_fit_to_window)
-        view_menu.addAction(self.act_fit)
+        # View menu removed; Fit toggle lives in toolbar only
 
         # No separate Plots menu; histogram is opened from Parameters panel
 
@@ -169,7 +192,7 @@ class MainWindow(QMainWindow):
         open_act.triggered.connect(self.open_image)
         tb.addAction(open_act)
         tb.addSeparator()
-        self.act_fit_tb = QAction("Fit", self, checkable=True)
+        self.act_fit_tb = QAction("Fit to Window", self, checkable=True)
         self.act_fit_tb.setChecked(True)
         self.act_fit_tb.toggled.connect(self._toggle_fit_to_window)
         tb.addAction(self.act_fit_tb)
@@ -226,11 +249,12 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(idx + 1)
 
     def _toggle_fit_to_window(self, enabled: bool):
-        # Keep menu and toolbar in sync
-        if hasattr(self, 'act_fit') and self.act_fit.isChecked() != enabled:
-            self.act_fit.setChecked(enabled)
+        # Keep toolbar state in sync and update label
         if hasattr(self, 'act_fit_tb') and self.act_fit_tb.isChecked() != enabled:
             self.act_fit_tb.setChecked(enabled)
+        # Update toolbar action text to reflect the inverse action (for clarity)
+        if hasattr(self, 'act_fit_tb'):
+            self.act_fit_tb.setText("Actual Size" if enabled else "Fit to Window")
         for lab in (
             self.label_original, self.label_gray_mean, self.label_gray_hsv,
             self.label_bin_fixed, self.label_bin_otsu,
@@ -255,8 +279,13 @@ class MainWindow(QMainWindow):
         self._row_thr_widget = box_thr
         h1 = QHBoxLayout(box_thr)
         h1.setContentsMargins(0, 0, 0, 0)
+        self.sl_thr = QSlider(Qt.Horizontal)
+        self.sl_thr.setRange(0, 255)
+        self.sl_thr.setValue(128)
+        self.sl_thr.setFixedWidth(160)
         h1.addWidget(self.sb_thr)
         h1.addWidget(self.cb_inv)
+        h1.addWidget(self.sl_thr)
         self.lbl_thr = QLabel("Threshold:")
         form.addRow(self.lbl_thr, box_thr)
 
@@ -273,8 +302,20 @@ class MainWindow(QMainWindow):
         self._row_g_widget = box_g
         h2 = QHBoxLayout(box_g)
         h2.setContentsMargins(0, 0, 0, 0)
+        self.sl_gk = QSlider(Qt.Horizontal)
+        self.sl_gk.setRange(3, 99)
+        self.sl_gk.setSingleStep(2)
+        self.sl_gk.setPageStep(2)
+        self.sl_gk.setValue(5)
+        self.sl_gk.setFixedWidth(140)
+        self.sl_gs = QSlider(Qt.Horizontal)
+        self.sl_gs.setRange(1, 500)  # maps to 0.1..50.0
+        self.sl_gs.setValue(10)      # 1.0
+        self.sl_gs.setFixedWidth(140)
         h2.addWidget(self.sb_gk)
         h2.addWidget(self.ds_gs)
+        h2.addWidget(self.sl_gk)
+        h2.addWidget(self.sl_gs)
         self.lbl_g = QLabel("Gaussian k/sigma:")
         form.addRow(self.lbl_g, box_g)
 
@@ -291,8 +332,20 @@ class MainWindow(QMainWindow):
         self._row_l_widget = box_l
         h3 = QHBoxLayout(box_l)
         h3.setContentsMargins(0, 0, 0, 0)
+        self.sl_la = QSlider(Qt.Horizontal)
+        self.sl_la.setRange(0, 50)  # maps to 0.0..5.0
+        self.sl_la.setValue(10)     # 1.0
+        self.sl_la.setFixedWidth(140)
+        self.sl_lk = QSlider(Qt.Horizontal)
+        self.sl_lk.setRange(1, 31)
+        self.sl_lk.setSingleStep(2)
+        self.sl_lk.setPageStep(2)
+        self.sl_lk.setValue(3)
+        self.sl_lk.setFixedWidth(140)
         h3.addWidget(self.ds_la)
         h3.addWidget(self.sb_lk)
+        h3.addWidget(self.sl_la)
+        h3.addWidget(self.sl_lk)
         self.lbl_l = QLabel("Laplacian a/ksize:")
         form.addRow(self.lbl_l, box_l)
 
@@ -302,8 +355,17 @@ class MainWindow(QMainWindow):
         self.sb_sk.setSingleStep(2)
         self.sb_sk.setValue(3)
         self.lbl_s = QLabel("Sobel ksize:")
-        self._row_s_widget = self.sb_sk
-        form.addRow(self.lbl_s, self._row_s_widget)
+        sbox = QWidget(); self._row_s_widget = sbox
+        hs = QHBoxLayout(sbox); hs.setContentsMargins(0, 0, 0, 0)
+        self.sl_sk = QSlider(Qt.Horizontal)
+        self.sl_sk.setRange(1, 31)
+        self.sl_sk.setSingleStep(2)
+        self.sl_sk.setPageStep(2)
+        self.sl_sk.setValue(3)
+        self.sl_sk.setFixedWidth(200)
+        hs.addWidget(self.sb_sk)
+        hs.addWidget(self.sl_sk)
+        form.addRow(self.lbl_s, sbox)
 
         # Shift
         self.sb_dx = QSpinBox()
@@ -316,8 +378,12 @@ class MainWindow(QMainWindow):
         self._row_shift_widget = box_s
         h4 = QHBoxLayout(box_s)
         h4.setContentsMargins(0, 0, 0, 0)
+        self.sl_dx = QSlider(Qt.Horizontal); self.sl_dx.setRange(-1000, 1000); self.sl_dx.setValue(40); self.sl_dx.setFixedWidth(180)
+        self.sl_dy = QSlider(Qt.Horizontal); self.sl_dy.setRange(-1000, 1000); self.sl_dy.setValue(30); self.sl_dy.setFixedWidth(180)
         h4.addWidget(self.sb_dx)
         h4.addWidget(self.sb_dy)
+        h4.addWidget(self.sl_dx)
+        h4.addWidget(self.sl_dy)
         self.lbl_shift = QLabel("Shift dx/dy:")
         form.addRow(self.lbl_shift, box_s)
 
@@ -327,25 +393,38 @@ class MainWindow(QMainWindow):
         self.ds_ang.setSingleStep(1.0)
         self.ds_ang.setValue(15.0)
         self.lbl_ang = QLabel("Rotate angle:")
-        self._row_ang_widget = self.ds_ang
-        form.addRow(self.lbl_ang, self._row_ang_widget)
+        ang_box = QWidget(); self._row_ang_widget = ang_box
+        ha = QHBoxLayout(ang_box); ha.setContentsMargins(0, 0, 0, 0)
+        self.sl_ang = QSlider(Qt.Horizontal); self.sl_ang.setRange(-180, 180); self.sl_ang.setValue(15); self.sl_ang.setFixedWidth(220)
+        ha.addWidget(self.ds_ang)
+        ha.addWidget(self.sl_ang)
+        form.addRow(self.lbl_ang, ang_box)
 
         dock.setWidget(w)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
-        # Connect signals
-        for wid in (
-            self.sb_thr, self.cb_inv,
-            self.sb_gk, self.ds_gs,
-            self.ds_la, self.sb_lk,
-            self.sb_sk,
-            self.sb_dx, self.sb_dy,
-            self.ds_ang,
-        ):
-            if isinstance(wid, (QSpinBox, QDoubleSpinBox)):
-                wid.valueChanged.connect(self.update_views)
-            elif isinstance(wid, QCheckBox):
-                wid.toggled.connect(self.update_views)
+        # Connect signals (spinboxes/checkbox)
+        self.sb_thr.valueChanged.connect(self.update_views)
+        self.cb_inv.toggled.connect(self.update_views)
+        self.sb_gk.valueChanged.connect(self.update_views)
+        self.ds_gs.valueChanged.connect(self.update_views)
+        self.ds_la.valueChanged.connect(self.update_views)
+        self.sb_lk.valueChanged.connect(self.update_views)
+        self.sb_sk.valueChanged.connect(self.update_views)
+        self.sb_dx.valueChanged.connect(self.update_views)
+        self.sb_dy.valueChanged.connect(self.update_views)
+        self.ds_ang.valueChanged.connect(self.update_views)
+
+        # Bind sliders to spin boxes
+        self._bind_int_slider(self.sl_thr, self.sb_thr)
+        self._bind_int_slider(self.sl_gk, self.sb_gk, step=2, make_odd=True)
+        self._bind_scaled_slider(self.sl_gs, self.ds_gs, scale=10.0)  # 1..500 -> 0.1..50.0
+        self._bind_scaled_slider(self.sl_la, self.ds_la, scale=10.0)  # 0..50  -> 0.0..5.0
+        self._bind_int_slider(self.sl_lk, self.sb_lk, step=2, make_odd=True)
+        self._bind_int_slider(self.sl_sk, self.sb_sk, step=2, make_odd=True)
+        self._bind_int_slider(self.sl_dx, self.sb_dx)
+        self._bind_int_slider(self.sl_dy, self.sb_dy)
+        self._bind_int_slider(self.sl_ang, self.ds_ang, is_double=True)
 
         # Histogram button
         self.btn_hist = QPushButton("Show Histogram")
@@ -354,6 +433,42 @@ class MainWindow(QMainWindow):
 
         # Initial visibility
         self._update_params_visibility()
+
+    def _bind_int_slider(self, slider: QSlider, spin: QWidget, step: int = 1, make_odd: bool = False, is_double: bool = False):
+        def on_slider(val: int):
+            v = val
+            if make_odd:
+                if v % 2 == 0:
+                    v = v + 1 if v < slider.maximum() else v - 1
+            if is_double:
+                # QDoubleSpinBox expects float
+                spin.setValue(float(v))
+            else:
+                spin.setValue(int(v))
+        def on_spin(val):
+            v = int(val)
+            if make_odd and v % 2 == 0:
+                v += 1
+            if slider.value() != v:
+                slider.setValue(v)
+        slider.valueChanged.connect(on_slider)
+        if isinstance(spin, QSpinBox):
+            spin.valueChanged.connect(on_spin)
+        elif isinstance(spin, QDoubleSpinBox):
+            spin.valueChanged.connect(lambda fv: on_spin(int(round(fv))))
+
+    def _bind_scaled_slider(self, slider: QSlider, dspin: QDoubleSpinBox, scale: float):
+        # slider int -> double spin with scale factor
+        def on_slider(val: int):
+            v = round(val / scale, 2)
+            if abs(dspin.value() - v) > 1e-6:
+                dspin.setValue(v)
+        def on_spin(fv: float):
+            v = int(round(fv * scale))
+            if slider.value() != v:
+                slider.setValue(v)
+        slider.valueChanged.connect(on_slider)
+        dspin.valueChanged.connect(on_spin)
 
     # Removed old plot tab methods; histogram shows in a dialog now
 
