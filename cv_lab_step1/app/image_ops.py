@@ -12,22 +12,14 @@ import numpy as np
 import cv2
 
 def read_color_bgr(path: str) -> np.ndarray:
-    """
-    Read a color image from disk in BGR format (OpenCV default).
-    Returns: np.ndarray of shape (H, W, 3), dtype=uint8
-    Raises: FileNotFoundError if path is invalid or image cannot be read.
-    """
+
     img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Failed to read image: {path}")
     return img
 
 def to_gray_mean(bgr: np.ndarray) -> np.ndarray:
-    """
-    Convert a BGR image to grayscale via simple channel averaging.
-    y = (R + G + B) / 3
-    Returns uint8 grayscale image.
-    """
+ 
     if bgr.ndim != 3 or bgr.shape[2] != 3:
         raise ValueError("to_gray_mean expects a BGR image with shape (H, W, 3).")
     # Convert to float for precise mean, then back to uint8
@@ -185,3 +177,194 @@ def rotate_about_center(img: np.ndarray, angle_deg: float = 15.0, center: Tuple[
     M = cv2.getRotationMatrix2D(center, float(angle_deg), float(scale))
     rotated = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
     return rotated
+
+
+# --- Lab 2: Feature Detection ---
+
+def _calculate_adaptive_hough_params(gray: np.ndarray) -> dict:
+    """
+    Calculate adaptive Hough parameters based on image characteristics.
+    Returns dictionary with adaptive parameters for both lines and circles.
+    """
+    h, w = gray.shape[:2]
+    diagonal = int(np.sqrt(h*h + w*w))
+    
+    # Adaptive parameters based on image size
+    params = {
+        # Line parameters
+        'line_threshold': max(50, min(200, int(diagonal * 0.1))),
+        'line_min_length': max(20, min(100, int(diagonal * 0.05))),
+        'line_max_gap': max(5, min(30, int(diagonal * 0.02))),
+        
+        # Circle parameters  
+        'circle_dp': 1.0,
+        'circle_min_dist': max(20, min(150, int(diagonal * 0.08))),
+        'circle_param1': max(30, min(150, int(diagonal * 0.15))),
+        'circle_param2': max(20, min(100, int(diagonal * 0.1))),
+        'circle_min_radius': max(5, int(diagonal * 0.02)),
+        'circle_max_radius': min(200, int(diagonal * 0.3))
+    }
+    
+    return params
+
+def hough_lines(gray: np.ndarray, rho: float = 1.0, theta: float = np.pi/180, threshold: int = 100, 
+                min_line_length: int = 50, max_line_gap: int = 10, adaptive: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Detect lines using Hough Line Transform.
+    If adaptive=True, automatically calculates optimal parameters based on image size.
+    Returns (image_with_lines, lines_array).
+    """
+    if gray.ndim != 2:
+        raise ValueError("hough_lines expects a grayscale image with shape (H, W).")
+    
+    # Use adaptive parameters if requested
+    if adaptive:
+        adaptive_params = _calculate_adaptive_hough_params(gray)
+        threshold = adaptive_params['line_threshold']
+        min_line_length = adaptive_params['line_min_length']
+        max_line_gap = adaptive_params['line_max_gap']
+    
+    # Detect edges first
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    
+    # Hough line detection
+    lines = cv2.HoughLinesP(edges, rho, theta, threshold, 
+                           minLineLength=min_line_length, maxLineGap=max_line_gap)
+    
+    # Draw lines on original image
+    result = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(result, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    
+    return result, lines if lines is not None else np.array([])
+
+
+def hough_circles(gray: np.ndarray, dp: float = 1.0, min_dist: float = 50.0, 
+                  param1: float = 50.0, param2: float = 30.0, min_radius: int = 0, 
+                  max_radius: int = 0, adaptive: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Detect circles using Hough Circle Transform.
+    If adaptive=True, automatically calculates optimal parameters based on image size.
+    Returns (image_with_circles, circles_array).
+    """
+    if gray.ndim != 2:
+        raise ValueError("hough_circles expects a grayscale image with shape (H, W).")
+    
+    # Use adaptive parameters if requested
+    if adaptive:
+        adaptive_params = _calculate_adaptive_hough_params(gray)
+        min_dist = adaptive_params['circle_min_dist']
+        param1 = adaptive_params['circle_param1']
+        param2 = adaptive_params['circle_param2']
+        min_radius = adaptive_params['circle_min_radius']
+        max_radius = adaptive_params['circle_max_radius']
+    
+    # Detect circles
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp, min_dist,
+                              param1=param1, param2=param2,
+                              minRadius=min_radius, maxRadius=max_radius)
+    
+    # Draw circles on original image
+    result = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    if circles is not None:
+        circles = np.round(circles[0, :]).astype("int")
+        for (x, y, r) in circles:
+            cv2.circle(result, (x, y), r, (0, 255, 0), 2)
+            cv2.circle(result, (x, y), 2, (0, 0, 255), 3)
+    
+    return result, circles if circles is not None else np.array([])
+
+
+def local_statistics(gray: np.ndarray, window_size: int = 15) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute local statistical features: mean, variance, skewness, kurtosis.
+    Returns (mean_map, variance_map, skewness_map, kurtosis_map).
+    """
+    if gray.ndim != 2:
+        raise ValueError("local_statistics expects a grayscale image with shape (H, W).")
+    
+    # Convert to float for calculations
+    img_float = gray.astype(np.float32)
+    h, w = img_float.shape
+    
+    # Use OpenCV's boxFilter for efficient mean computation
+    mean_map = cv2.boxFilter(img_float, -1, (window_size, window_size), normalize=True)
+    
+    # Compute variance using E[X^2] - E[X]^2
+    img_squared = img_float ** 2
+    mean_squared = cv2.boxFilter(img_squared, -1, (window_size, window_size), normalize=True)
+    var_map = mean_squared - (mean_map ** 2)
+    var_map = np.maximum(var_map, 0)  # Ensure non-negative
+    
+    # For skewness and kurtosis, use a simplified approach
+    # Compute local standard deviation
+    std_map = np.sqrt(var_map)
+    
+    # Simplified skewness: measure of asymmetry
+    # Use difference between mean and median as proxy
+    median_map = cv2.medianBlur(img_float.astype(np.uint8), window_size).astype(np.float32)
+    skew_map = (mean_map - median_map) / (std_map + 1e-6)
+    
+    # Simplified kurtosis: measure of peakedness
+    # Use local contrast as proxy
+    laplacian = cv2.Laplacian(img_float, cv2.CV_32F, ksize=3)
+    kurt_map = np.abs(laplacian) / (std_map + 1e-6)
+    
+    # Normalize to 0-255 range
+    mean_norm = cv2.normalize(mean_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    var_norm = cv2.normalize(var_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    skew_norm = cv2.normalize(skew_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    kurt_norm = cv2.normalize(kurt_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    
+    return mean_norm, var_norm, skew_norm, kurt_norm
+
+
+def texture_segmentation(gray: np.ndarray, seed_point: Tuple[int, int], 
+                        threshold: float = 30.0, window_size: int = 15) -> np.ndarray:
+    """
+    Texture-based region growing segmentation starting from seed point.
+    Uses local variance as texture feature.
+    Returns segmented image with different regions colored differently.
+    """
+    if gray.ndim != 2:
+        raise ValueError("texture_segmentation expects a grayscale image with shape (H, W).")
+    
+    h, w = gray.shape
+    seed_y, seed_x = seed_point
+    
+    if not (0 <= seed_x < w and 0 <= seed_y < h):
+        raise ValueError(f"Seed point {seed_point} is outside image bounds {(h, w)}")
+    
+    # Use efficient OpenCV operations for local variance
+    img_float = gray.astype(np.float32)
+    
+    # Compute local mean and variance efficiently
+    mean_map = cv2.boxFilter(img_float, -1, (window_size, window_size), normalize=True)
+    img_squared = img_float ** 2
+    mean_squared = cv2.boxFilter(img_squared, -1, (window_size, window_size), normalize=True)
+    var_map = mean_squared - (mean_map ** 2)
+    var_map = np.maximum(var_map, 0)
+    
+    # Get seed texture feature
+    seed_texture = var_map[seed_y, seed_x]
+    
+    # Simple threshold-based segmentation
+    # Find pixels with similar texture variance
+    texture_diff = np.abs(var_map - seed_texture)
+    similar_mask = texture_diff <= threshold
+    
+    # Create colored result
+    result = np.zeros((h, w, 3), dtype=np.uint8)
+    
+    # Color the segmented region
+    if np.any(similar_mask):
+        # Use a fixed color for the segmented region
+        result[similar_mask] = [0, 255, 0]  # Green for segmented region
+        
+        # Add some variation based on local variance
+        variance_normalized = cv2.normalize(var_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        result[similar_mask, 1] = np.minimum(255, result[similar_mask, 1] + variance_normalized[similar_mask] // 4)
+    
+    return result

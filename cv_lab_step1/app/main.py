@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Desktop app for Computer Vision Lab — Step 1
+Desktop app for Computer Vision Lab — Steps 1 & 2
 Functions implemented:
-- Open color image
-- Show original
-- Show grayscale via RGB averaging
-- Show grayscale via HSV (V channel)
-UI: minimal PySide6 app with 3 tabs to preview images.
+Lab 1:
+- Open color image, grayscale conversion (RGB mean, HSV)
+- Binarization (fixed threshold, Otsu)
+- Histogram operations (normalize, equalize, stretch)
+- Convolutions (Gaussian blur, Laplacian sharpen, Sobel edges)
+- Geometric transforms (cyclic shift, rotation)
+
+Lab 2:
+- Hough line detection
+- Hough circle detection  
+- Local statistical features (mean, variance, skewness, kurtosis)
+- Texture-based segmentation with seed point
+UI: PySide6 app with tabs and interactive parameters.
 """
 from __future__ import annotations
 import sys
@@ -32,6 +40,7 @@ from .image_ops import (
     hist_normalize, hist_equalize, hist_contrast_stretch,
     gaussian_blur, laplacian_sharpen, sobel_edges,
     cyclic_shift, rotate_about_center,
+    hough_lines, hough_circles, local_statistics, texture_segmentation,
 )
 from .qt_image import cv_to_qpixmap
 
@@ -83,7 +92,7 @@ class ImageLabel(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CV Lab — Step 1 (OpenCV + PySide6)")
+        self.setWindowTitle("CV Lab — Steps 1 & 2 (OpenCV + PySide6)")
         self.resize(1200, 800)
         self._bgr_image: Optional[np.ndarray] = None
         self._gray_mean: Optional[np.ndarray] = None
@@ -109,6 +118,15 @@ class MainWindow(QMainWindow):
         self.label_shift = ImageLabel()
         self.label_rotate = ImageLabel()
 
+        # Lab 2: Feature Detection
+        self.label_hough_lines = ImageLabel()
+        self.label_hough_circles = ImageLabel()
+        self.label_local_mean = ImageLabel()
+        self.label_local_var = ImageLabel()
+        self.label_local_skew = ImageLabel()
+        self.label_local_kurt = ImageLabel()
+        self.label_texture_seg = ImageLabel()
+
         self.tabs.addTab(self._wrap(self.label_original, "Original (BGR→RGB)"), "Original (BGR→RGB)")
         self.tabs.addTab(self._wrap(self.label_gray_mean, "Gray — mean(R,G,B)"), "Gray — mean(R,G,B)")
         self.tabs.addTab(self._wrap(self.label_gray_hsv, "Gray — HSV (V channel)"), "Gray — HSV (V channel)")
@@ -122,6 +140,15 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._wrap(self.label_edges, "Edges — Sobel"), "Edges — Sobel")
         self.tabs.addTab(self._wrap(self.label_shift, "Geometry — Cyclic shift"), "Geometry — Cyclic shift")
         self.tabs.addTab(self._wrap(self.label_rotate, "Geometry — Rotate center +15°"), "Geometry — Rotate center +15°")
+        
+        # Lab 2 tabs
+        self.tabs.addTab(self._wrap(self.label_hough_lines, "Hough Lines"), "Hough Lines")
+        self.tabs.addTab(self._wrap(self.label_hough_circles, "Hough Circles"), "Hough Circles")
+        self.tabs.addTab(self._wrap(self.label_local_mean, "Local Statistics — Mean"), "Local Statistics — Mean")
+        self.tabs.addTab(self._wrap(self.label_local_var, "Local Statistics — Variance"), "Local Statistics — Variance")
+        self.tabs.addTab(self._wrap(self.label_local_skew, "Local Statistics — Skewness"), "Local Statistics — Skewness")
+        self.tabs.addTab(self._wrap(self.label_local_kurt, "Local Statistics — Kurtosis"), "Local Statistics — Kurtosis")
+        self.tabs.addTab(self._wrap(self.label_texture_seg, "Texture Segmentation"), "Texture Segmentation")
         # Histogram is shown on demand via the Parameters panel
 
         # Menu
@@ -260,6 +287,10 @@ class MainWindow(QMainWindow):
             self.label_bin_fixed, self.label_bin_otsu,
             self.label_hist_norm, self.label_hist_eq, self.label_hist_stretch,
             self.label_blur, self.label_sharpen, self.label_edges,
+            self.label_shift, self.label_rotate,
+            self.label_hough_lines, self.label_hough_circles,
+            self.label_local_mean, self.label_local_var, self.label_local_skew, self.label_local_kurt,
+            self.label_texture_seg,
         ):
             lab.set_fit_to_window(enabled)
 
@@ -400,12 +431,253 @@ class MainWindow(QMainWindow):
         ha.addWidget(self.sl_ang)
         form.addRow(self.lbl_ang, ang_box)
 
+        # Lab 2: Hough Lines parameters
+        self.cb_hough_adaptive = QCheckBox("Adaptive")
+        self.cb_hough_adaptive.setChecked(True)
+        
+        self.sb_hough_thr = QSpinBox()
+        self.sb_hough_thr.setRange(10, 500)
+        self.sb_hough_thr.setValue(100)
+        self.sl_hough_thr = QSlider(Qt.Horizontal)
+        self.sl_hough_thr.setRange(10, 500)
+        self.sl_hough_thr.setValue(100)
+        self.sl_hough_thr.setFixedWidth(120)
+        
+        self.sb_hough_min_len = QSpinBox()
+        self.sb_hough_min_len.setRange(10, 200)
+        self.sb_hough_min_len.setValue(50)
+        self.sl_hough_min_len = QSlider(Qt.Horizontal)
+        self.sl_hough_min_len.setRange(10, 200)
+        self.sl_hough_min_len.setValue(50)
+        self.sl_hough_min_len.setFixedWidth(120)
+        
+        self.sb_hough_max_gap = QSpinBox()
+        self.sb_hough_max_gap.setRange(5, 50)
+        self.sb_hough_max_gap.setValue(10)
+        self.sl_hough_max_gap = QSlider(Qt.Horizontal)
+        self.sl_hough_max_gap.setRange(5, 50)
+        self.sl_hough_max_gap.setValue(10)
+        self.sl_hough_max_gap.setFixedWidth(120)
+        
+        # Hough Lines - вертикальное расположение
+        self.lbl_hough = QLabel("Hough Lines:")
+        form.addRow(self.lbl_hough, self.cb_hough_adaptive)
+        
+        # Threshold
+        thr_box = QWidget()
+        hh1 = QHBoxLayout(thr_box)
+        hh1.setContentsMargins(0, 0, 0, 0)
+        hh1.addWidget(QLabel("Threshold:"))
+        hh1.addWidget(self.sb_hough_thr)
+        hh1.addWidget(self.sl_hough_thr)
+        form.addRow("", thr_box)
+        
+        # Min length
+        min_box = QWidget()
+        hh2 = QHBoxLayout(min_box)
+        hh2.setContentsMargins(0, 0, 0, 0)
+        hh2.addWidget(QLabel("Min length:"))
+        hh2.addWidget(self.sb_hough_min_len)
+        hh2.addWidget(self.sl_hough_min_len)
+        form.addRow("", min_box)
+        
+        # Max gap
+        gap_box = QWidget()
+        hh3 = QHBoxLayout(gap_box)
+        hh3.setContentsMargins(0, 0, 0, 0)
+        hh3.addWidget(QLabel("Max gap:"))
+        hh3.addWidget(self.sb_hough_max_gap)
+        hh3.addWidget(self.sl_hough_max_gap)
+        form.addRow("", gap_box)
+        
+        self._row_hough_widget = [thr_box, min_box, gap_box]
+
+        # Lab 2: Hough Circles parameters
+        self.cb_circle_adaptive = QCheckBox("Adaptive")
+        self.cb_circle_adaptive.setChecked(True)
+        
+        self.ds_circle_dp = QDoubleSpinBox()
+        self.ds_circle_dp.setRange(0.5, 3.0)
+        self.ds_circle_dp.setSingleStep(0.1)
+        self.ds_circle_dp.setValue(1.0)
+        self.sl_circle_dp = QSlider(Qt.Horizontal)
+        self.sl_circle_dp.setRange(5, 30)  # 0.5 to 3.0
+        self.sl_circle_dp.setValue(10)     # 1.0
+        self.sl_circle_dp.setFixedWidth(100)
+        
+        self.sb_circle_min_dist = QSpinBox()
+        self.sb_circle_min_dist.setRange(10, 200)
+        self.sb_circle_min_dist.setValue(50)
+        self.sl_circle_min_dist = QSlider(Qt.Horizontal)
+        self.sl_circle_min_dist.setRange(10, 200)
+        self.sl_circle_min_dist.setValue(50)
+        self.sl_circle_min_dist.setFixedWidth(100)
+        
+        self.sb_circle_param1 = QSpinBox()
+        self.sb_circle_param1.setRange(10, 200)
+        self.sb_circle_param1.setValue(50)
+        self.sl_circle_param1 = QSlider(Qt.Horizontal)
+        self.sl_circle_param1.setRange(10, 200)
+        self.sl_circle_param1.setValue(50)
+        self.sl_circle_param1.setFixedWidth(100)
+        
+        self.sb_circle_param2 = QSpinBox()
+        self.sb_circle_param2.setRange(10, 200)
+        self.sb_circle_param2.setValue(30)
+        self.sl_circle_param2 = QSlider(Qt.Horizontal)
+        self.sl_circle_param2.setRange(10, 200)
+        self.sl_circle_param2.setValue(30)
+        self.sl_circle_param2.setFixedWidth(100)
+        
+        # Hough Circles - вертикальное расположение
+        self.lbl_circle = QLabel("Hough Circles:")
+        form.addRow(self.lbl_circle, self.cb_circle_adaptive)
+        
+        # DP
+        dp_box = QWidget()
+        hc1 = QHBoxLayout(dp_box)
+        hc1.setContentsMargins(0, 0, 0, 0)
+        hc1.addWidget(QLabel("DP:"))
+        hc1.addWidget(self.ds_circle_dp)
+        hc1.addWidget(self.sl_circle_dp)
+        form.addRow("", dp_box)
+        
+        # Min distance
+        dist_box = QWidget()
+        hc2 = QHBoxLayout(dist_box)
+        hc2.setContentsMargins(0, 0, 0, 0)
+        hc2.addWidget(QLabel("Min dist:"))
+        hc2.addWidget(self.sb_circle_min_dist)
+        hc2.addWidget(self.sl_circle_min_dist)
+        form.addRow("", dist_box)
+        
+        # Param1
+        p1_box = QWidget()
+        hc3 = QHBoxLayout(p1_box)
+        hc3.setContentsMargins(0, 0, 0, 0)
+        hc3.addWidget(QLabel("Param1:"))
+        hc3.addWidget(self.sb_circle_param1)
+        hc3.addWidget(self.sl_circle_param1)
+        form.addRow("", p1_box)
+        
+        # Param2
+        p2_box = QWidget()
+        hc4 = QHBoxLayout(p2_box)
+        hc4.setContentsMargins(0, 0, 0, 0)
+        hc4.addWidget(QLabel("Param2:"))
+        hc4.addWidget(self.sb_circle_param2)
+        hc4.addWidget(self.sl_circle_param2)
+        form.addRow("", p2_box)
+        
+        self._row_circle_widget = [dp_box, dist_box, p1_box, p2_box]
+
+        # Lab 2: Local Statistics parameters
+        self.sb_local_window = QSpinBox()
+        self.sb_local_window.setRange(5, 51)
+        self.sb_local_window.setSingleStep(2)
+        self.sb_local_window.setValue(15)
+        self.sl_local_window = QSlider(Qt.Horizontal)
+        self.sl_local_window.setRange(5, 51)
+        self.sl_local_window.setSingleStep(2)
+        self.sl_local_window.setValue(15)
+        self.sl_local_window.setFixedWidth(150)
+        
+        local_box = QWidget()
+        self._row_local_widget = local_box
+        hl = QHBoxLayout(local_box)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(self.sb_local_window)
+        hl.addWidget(self.sl_local_window)
+        self.lbl_local = QLabel("Local Stats window:")
+        form.addRow(self.lbl_local, self._row_local_widget)
+
+        # Lab 2: Texture Segmentation parameters
+        self.sb_texture_thr = QSpinBox()
+        self.sb_texture_thr.setRange(5, 100)
+        self.sb_texture_thr.setValue(30)
+        self.sl_texture_thr = QSlider(Qt.Horizontal)
+        self.sl_texture_thr.setRange(5, 100)
+        self.sl_texture_thr.setValue(30)
+        self.sl_texture_thr.setFixedWidth(100)
+        
+        self.sb_texture_window = QSpinBox()
+        self.sb_texture_window.setRange(5, 51)
+        self.sb_texture_window.setSingleStep(2)
+        self.sb_texture_window.setValue(15)
+        self.sl_texture_window = QSlider(Qt.Horizontal)
+        self.sl_texture_window.setRange(5, 51)
+        self.sl_texture_window.setSingleStep(2)
+        self.sl_texture_window.setValue(15)
+        self.sl_texture_window.setFixedWidth(100)
+        
+        self.sb_seed_x = QSpinBox()
+        self.sb_seed_x.setRange(0, 2000)
+        self.sb_seed_x.setValue(100)
+        self.sl_seed_x = QSlider(Qt.Horizontal)
+        self.sl_seed_x.setRange(0, 2000)
+        self.sl_seed_x.setValue(100)
+        self.sl_seed_x.setFixedWidth(100)
+        
+        self.sb_seed_y = QSpinBox()
+        self.sb_seed_y.setRange(0, 2000)
+        self.sb_seed_y.setValue(100)
+        self.sl_seed_y = QSlider(Qt.Horizontal)
+        self.sl_seed_y.setRange(0, 2000)
+        self.sl_seed_y.setValue(100)
+        self.sl_seed_y.setFixedWidth(100)
+        
+        # Texture Segmentation - вертикальное расположение
+        self.lbl_texture = QLabel("Texture Segmentation:")
+        form.addRow(self.lbl_texture, QLabel(""))
+        
+        # Threshold
+        thr_box = QWidget()
+        ht1 = QHBoxLayout(thr_box)
+        ht1.setContentsMargins(0, 0, 0, 0)
+        ht1.addWidget(QLabel("Threshold:"))
+        ht1.addWidget(self.sb_texture_thr)
+        ht1.addWidget(self.sl_texture_thr)
+        form.addRow("", thr_box)
+        
+        # Window
+        win_box = QWidget()
+        ht2 = QHBoxLayout(win_box)
+        ht2.setContentsMargins(0, 0, 0, 0)
+        ht2.addWidget(QLabel("Window:"))
+        ht2.addWidget(self.sb_texture_window)
+        ht2.addWidget(self.sl_texture_window)
+        form.addRow("", win_box)
+        
+        # Seed X
+        x_box = QWidget()
+        ht3 = QHBoxLayout(x_box)
+        ht3.setContentsMargins(0, 0, 0, 0)
+        ht3.addWidget(QLabel("Seed X:"))
+        ht3.addWidget(self.sb_seed_x)
+        ht3.addWidget(self.sl_seed_x)
+        form.addRow("", x_box)
+        
+        # Seed Y
+        y_box = QWidget()
+        ht4 = QHBoxLayout(y_box)
+        ht4.setContentsMargins(0, 0, 0, 0)
+        ht4.addWidget(QLabel("Seed Y:"))
+        ht4.addWidget(self.sb_seed_y)
+        ht4.addWidget(self.sl_seed_y)
+        form.addRow("", y_box)
+        
+        self._row_texture_widget = [thr_box, win_box, x_box, y_box]
+
         dock.setWidget(w)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
         # Connect signals (spinboxes/checkbox)
         self.sb_thr.valueChanged.connect(self.update_views)
         self.cb_inv.toggled.connect(self.update_views)
+        
+        # Connect adaptive checkboxes to update parameters
+        self.cb_hough_adaptive.toggled.connect(self._update_hough_parameters)
+        self.cb_circle_adaptive.toggled.connect(self._update_circle_parameters)
         self.sb_gk.valueChanged.connect(self.update_views)
         self.ds_gs.valueChanged.connect(self.update_views)
         self.ds_la.valueChanged.connect(self.update_views)
@@ -414,6 +686,60 @@ class MainWindow(QMainWindow):
         self.sb_dx.valueChanged.connect(self.update_views)
         self.sb_dy.valueChanged.connect(self.update_views)
         self.ds_ang.valueChanged.connect(self.update_views)
+        
+        # Lab 2 signals
+        self.cb_hough_adaptive.toggled.connect(self.update_views)
+        self.sb_hough_thr.valueChanged.connect(self.update_views)
+        self.sl_hough_thr.valueChanged.connect(self.sb_hough_thr.setValue)
+        self.sb_hough_thr.valueChanged.connect(self.sl_hough_thr.setValue)
+        
+        self.sb_hough_min_len.valueChanged.connect(self.update_views)
+        self.sl_hough_min_len.valueChanged.connect(self.sb_hough_min_len.setValue)
+        self.sb_hough_min_len.valueChanged.connect(self.sl_hough_min_len.setValue)
+        
+        self.sb_hough_max_gap.valueChanged.connect(self.update_views)
+        self.sl_hough_max_gap.valueChanged.connect(self.sb_hough_max_gap.setValue)
+        self.sb_hough_max_gap.valueChanged.connect(self.sl_hough_max_gap.setValue)
+        
+        self.cb_circle_adaptive.toggled.connect(self.update_views)
+        self.ds_circle_dp.valueChanged.connect(self.update_views)
+        self.sl_circle_dp.valueChanged.connect(lambda v: self.ds_circle_dp.setValue(v / 10.0))
+        self.ds_circle_dp.valueChanged.connect(lambda v: self.sl_circle_dp.setValue(int(v * 10)))
+        
+        self.sb_circle_min_dist.valueChanged.connect(self.update_views)
+        self.sl_circle_min_dist.valueChanged.connect(self.sb_circle_min_dist.setValue)
+        self.sb_circle_min_dist.valueChanged.connect(self.sl_circle_min_dist.setValue)
+        
+        self.sb_circle_param1.valueChanged.connect(self.update_views)
+        self.sl_circle_param1.valueChanged.connect(self.sb_circle_param1.setValue)
+        self.sb_circle_param1.valueChanged.connect(self.sl_circle_param1.setValue)
+        
+        self.sb_circle_param2.valueChanged.connect(self.update_views)
+        self.sl_circle_param2.valueChanged.connect(self.sb_circle_param2.setValue)
+        self.sb_circle_param2.valueChanged.connect(self.sl_circle_param2.setValue)
+        
+        self.sb_local_window.valueChanged.connect(self.update_views)
+        self.sl_local_window.valueChanged.connect(self.sb_local_window.setValue)
+        self.sb_local_window.valueChanged.connect(self.sl_local_window.setValue)
+        
+        self.sb_texture_thr.valueChanged.connect(self.update_views)
+        self.sl_texture_thr.valueChanged.connect(self.sb_texture_thr.setValue)
+        self.sb_texture_thr.valueChanged.connect(self.sl_texture_thr.setValue)
+        
+        self.sb_texture_window.valueChanged.connect(self.update_views)
+        self.sl_texture_window.valueChanged.connect(self.sb_texture_window.setValue)
+        self.sb_texture_window.valueChanged.connect(self.sl_texture_window.setValue)
+        
+        self.sb_seed_x.valueChanged.connect(self.update_views)
+        self.sl_seed_x.valueChanged.connect(self.sb_seed_x.setValue)
+        self.sb_seed_x.valueChanged.connect(self.sl_seed_x.setValue)
+        
+        self.sb_seed_y.valueChanged.connect(self.update_views)
+        self.sl_seed_y.valueChanged.connect(self.sb_seed_y.setValue)
+        self.sb_seed_y.valueChanged.connect(self.sl_seed_y.setValue)
+        
+        # Tab change handler for lazy loading
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Bind sliders to spin boxes
         self._bind_int_slider(self.sl_thr, self.sb_thr)
@@ -476,6 +802,42 @@ class MainWindow(QMainWindow):
         label.setVisible(visible)
         field_widget.setVisible(visible)
 
+    def _update_hough_parameters(self):
+        """Update Hough line parameters based on adaptive mode"""
+        if self._bgr_image is None:
+            return
+        
+        if self.cb_hough_adaptive.isChecked():
+            # Calculate adaptive parameters
+            gray_hsv = self._gray_hsv if self._gray_hsv is not None else to_gray_hsv_value(self._bgr_image)
+            from .image_ops import _calculate_adaptive_hough_params
+            adaptive_params = _calculate_adaptive_hough_params(gray_hsv)
+            
+            # Update UI with adaptive values
+            self.sb_hough_thr.setValue(adaptive_params['line_threshold'])
+            self.sb_hough_min_len.setValue(adaptive_params['line_min_length'])
+            self.sb_hough_max_gap.setValue(adaptive_params['line_max_gap'])
+        
+        self.update_views()
+    
+    def _update_circle_parameters(self):
+        """Update Hough circle parameters based on adaptive mode"""
+        if self._bgr_image is None:
+            return
+        
+        if self.cb_circle_adaptive.isChecked():
+            # Calculate adaptive parameters
+            gray_hsv = self._gray_hsv if self._gray_hsv is not None else to_gray_hsv_value(self._bgr_image)
+            from .image_ops import _calculate_adaptive_hough_params
+            adaptive_params = _calculate_adaptive_hough_params(gray_hsv)
+            
+            # Update UI with adaptive values
+            self.sb_circle_min_dist.setValue(adaptive_params['circle_min_dist'])
+            self.sb_circle_param1.setValue(adaptive_params['circle_param1'])
+            self.sb_circle_param2.setValue(adaptive_params['circle_param2'])
+        
+        self.update_views()
+
     def _update_params_visibility(self):
         # Determine current tab
         name = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() > 0 else ""
@@ -487,6 +849,14 @@ class MainWindow(QMainWindow):
         self._set_row_visible(self.lbl_s, self._row_s_widget, False)
         self._set_row_visible(self.lbl_shift, self._row_shift_widget, False)
         self._set_row_visible(self.lbl_ang, self._row_ang_widget, False)
+        # Lab 2 parameters
+        for widget in self._row_hough_widget:
+            widget.setVisible(False)
+        for widget in self._row_circle_widget:
+            widget.setVisible(False)
+        self._set_row_visible(self.lbl_local, self._row_local_widget, False)
+        for widget in self._row_texture_widget:
+            widget.setVisible(False)
 
         # Show context-specific
         if name.startswith("Binarize — Fixed"):
@@ -512,6 +882,21 @@ class MainWindow(QMainWindow):
         elif name.startswith("Geometry — Rotate"):
             self._set_row_visible(self.lbl_ang, self._row_ang_widget, True)
             self.btn_hist.setVisible(True)
+        elif name.startswith("Hough Lines"):
+            for widget in self._row_hough_widget:
+                widget.setVisible(True)
+            self.btn_hist.setVisible(True)
+        elif name.startswith("Hough Circles"):
+            for widget in self._row_circle_widget:
+                widget.setVisible(True)
+            self.btn_hist.setVisible(True)
+        elif name.startswith("Local Statistics"):
+            self._set_row_visible(self.lbl_local, self._row_local_widget, True)
+            self.btn_hist.setVisible(True)
+        elif name.startswith("Texture Segmentation"):
+            for widget in self._row_texture_widget:
+                widget.setVisible(True)
+            self.btn_hist.setVisible(True)
         else:
             self.btn_hist.setVisible(True)
 
@@ -529,6 +914,9 @@ class MainWindow(QMainWindow):
             self.label_hist_norm, self.label_hist_eq, self.label_hist_stretch,
             self.label_blur, self.label_sharpen, self.label_edges,
             self.label_shift, self.label_rotate,
+            self.label_hough_lines, self.label_hough_circles,
+            self.label_local_mean, self.label_local_var, self.label_local_skew, self.label_local_kurt,
+            self.label_texture_seg,
         ][idx]
         pm = label._pixmap  # trusted internal from ImageLabel
         if pm is None:
@@ -604,6 +992,13 @@ class MainWindow(QMainWindow):
             ("edges_sobel", self.label_edges),
             ("shift", self.label_shift),
             ("rotate", self.label_rotate),
+            ("hough_lines", self.label_hough_lines),
+            ("hough_circles", self.label_hough_circles),
+            ("local_mean", self.label_local_mean),
+            ("local_var", self.label_local_var),
+            ("local_skew", self.label_local_skew),
+            ("local_kurt", self.label_local_kurt),
+            ("texture_seg", self.label_texture_seg),
         ]
         saved = []
         for name, lab in tabs:
@@ -643,6 +1038,11 @@ class MainWindow(QMainWindow):
         self._bgr_image = bgr
         self._gray_mean = to_gray_mean(bgr)
         self._gray_hsv = to_gray_hsv_value(bgr)
+        
+        # Update adaptive parameters for new image
+        self._update_hough_parameters()
+        self._update_circle_parameters()
+        
         self.update_views()
         h, w = bgr.shape[:2]
         self.statusBar().showMessage(f"Loaded: {path}  |  Size: {w}×{h}")
@@ -712,7 +1112,195 @@ class MainWindow(QMainWindow):
         self.label_rotate.set_cv_image(rotate_img)
         self._tab_image_map["Geometry — Rotate center +15°"] = rotate_img
 
-        # No persistent histogram logic; use _show_hist_dialog on demand
+        # Lab 2: Feature Detection - проверяем активную вкладку
+        current_tab_name = self.tabs.tabText(self.tabs.currentIndex())
+        
+        # Если активная вкладка - Lab 2, вычисляем её
+        if current_tab_name.startswith("Hough Lines"):
+            self._compute_hough_lines(gray_hsv)
+        elif current_tab_name.startswith("Hough Circles"):
+            self._compute_hough_circles(gray_hsv)
+        elif current_tab_name.startswith("Local Statistics"):
+            self._compute_local_statistics(gray_hsv)
+        elif current_tab_name.startswith("Texture Segmentation"):
+            self._compute_texture_segmentation(gray_hsv)
+        else:
+            # Для неактивных Lab 2 вкладок показываем заглушки
+            self._show_lab2_placeholders()
+
+    def _show_lab2_placeholders(self):
+        """Show placeholder images for Lab 2 tabs"""
+        if self._bgr_image is None:
+            return
+        
+        h, w = self._bgr_image.shape[:2]
+        placeholder = np.zeros((h, w, 3), dtype=np.uint8)
+        placeholder[:] = [50, 50, 50]  # Dark gray
+        
+        # Add text overlay
+        import cv2
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text = "Click to compute"
+        text_size = cv2.getTextSize(text, font, 1, 2)[0]
+        text_x = (w - text_size[0]) // 2
+        text_y = (h + text_size[1]) // 2
+        cv2.putText(placeholder, text, (text_x, text_y), font, 1, (255, 255, 255), 2)
+        
+        self.label_hough_lines.set_cv_image(placeholder)
+        self.label_hough_circles.set_cv_image(placeholder)
+        self.label_local_mean.set_cv_image(placeholder)
+        self.label_local_var.set_cv_image(placeholder)
+        self.label_local_skew.set_cv_image(placeholder)
+        self.label_local_kurt.set_cv_image(placeholder)
+        self.label_texture_seg.set_cv_image(placeholder)
+
+    def _on_tab_changed(self, index):
+        """Handle tab change for lazy loading of Lab 2 features"""
+        if self._bgr_image is None:
+            return
+        
+        tab_name = self.tabs.tabText(index)
+        gray_hsv = self._gray_hsv if self._gray_hsv is not None else to_gray_hsv_value(self._bgr_image)
+        
+        # Check if this is a Lab 2 tab that needs computation
+        if tab_name.startswith("Hough Lines"):
+            self._compute_hough_lines(gray_hsv)
+        elif tab_name.startswith("Hough Circles"):
+            self._compute_hough_circles(gray_hsv)
+        elif tab_name.startswith("Local Statistics"):
+            self._compute_local_statistics(gray_hsv)
+        elif tab_name.startswith("Texture Segmentation"):
+            self._compute_texture_segmentation(gray_hsv)
+
+    def _compute_hough_lines(self, gray_hsv):
+        """Compute Hough lines when tab is accessed"""
+        adaptive = bool(self.cb_hough_adaptive.isChecked()) if hasattr(self, 'cb_hough_adaptive') else True
+        hough_thr = int(self.sb_hough_thr.value()) if hasattr(self, 'sb_hough_thr') else 100
+        hough_min_len = int(self.sb_hough_min_len.value()) if hasattr(self, 'sb_hough_min_len') else 50
+        hough_max_gap = int(self.sb_hough_max_gap.value()) if hasattr(self, 'sb_hough_max_gap') else 10
+        hough_lines_img, _ = hough_lines(gray_hsv, threshold=hough_thr, 
+                                       min_line_length=hough_min_len, max_line_gap=hough_max_gap,
+                                       adaptive=adaptive)
+        self.label_hough_lines.set_cv_image(hough_lines_img)
+        self._tab_image_map["Hough Lines"] = hough_lines_img
+
+    def _compute_hough_circles(self, gray_hsv):
+        """Compute Hough circles when tab is accessed"""
+        adaptive = bool(self.cb_circle_adaptive.isChecked()) if hasattr(self, 'cb_circle_adaptive') else True
+        circle_dp = float(self.ds_circle_dp.value()) if hasattr(self, 'ds_circle_dp') else 1.0
+        circle_min_dist = int(self.sb_circle_min_dist.value()) if hasattr(self, 'sb_circle_min_dist') else 50
+        circle_param1 = int(self.sb_circle_param1.value()) if hasattr(self, 'sb_circle_param1') else 50
+        circle_param2 = int(self.sb_circle_param2.value()) if hasattr(self, 'sb_circle_param2') else 30
+        hough_circles_img, _ = hough_circles(gray_hsv, dp=circle_dp, min_dist=circle_min_dist,
+                                           param1=circle_param1, param2=circle_param2, adaptive=adaptive)
+        self.label_hough_circles.set_cv_image(hough_circles_img)
+        self._tab_image_map["Hough Circles"] = hough_circles_img
+
+    def _compute_local_statistics(self, gray_hsv):
+        """Compute local statistics when tab is accessed"""
+        local_window = int(self.sb_local_window.value()) if hasattr(self, 'sb_local_window') else 15
+        # Limit window size to prevent hanging
+        local_window = min(local_window, 31)  # Max 31x31 window
+        
+        try:
+            local_mean, local_var, local_skew, local_kurt = local_statistics(gray_hsv, window_size=local_window)
+            self.label_local_mean.set_cv_image(local_mean)
+            self._tab_image_map["Local Statistics — Mean"] = local_mean
+            self.label_local_var.set_cv_image(local_var)
+            self._tab_image_map["Local Statistics — Variance"] = local_var
+            self.label_local_skew.set_cv_image(local_skew)
+            self._tab_image_map["Local Statistics — Skewness"] = local_skew
+            self.label_local_kurt.set_cv_image(local_kurt)
+            self._tab_image_map["Local Statistics — Kurtosis"] = local_kurt
+        except Exception as e:
+            # If computation fails, show error
+            h, w = gray_hsv.shape[:2]
+            error_img = np.zeros((h, w, 3), dtype=np.uint8)
+            self.label_local_mean.set_cv_image(error_img)
+            self.label_local_var.set_cv_image(error_img)
+            self.label_local_skew.set_cv_image(error_img)
+            self.label_local_kurt.set_cv_image(error_img)
+
+    def _compute_texture_segmentation(self, gray_hsv):
+        """Compute texture segmentation when tab is accessed"""
+        texture_thr = int(self.sb_texture_thr.value()) if hasattr(self, 'sb_texture_thr') else 30
+        texture_window = int(self.sb_texture_window.value()) if hasattr(self, 'sb_texture_window') else 15
+        seed_x = int(self.sb_seed_x.value()) if hasattr(self, 'sb_seed_x') else 100
+        seed_y = int(self.sb_seed_y.value()) if hasattr(self, 'sb_seed_y') else 100
+        
+        # Ensure seed point is within image bounds
+        h, w = gray_hsv.shape[:2]
+        seed_x = max(0, min(w-1, seed_x))
+        seed_y = max(0, min(h-1, seed_y))
+        
+        try:
+            texture_seg_img = texture_segmentation(gray_hsv, seed_point=(seed_y, seed_x), 
+                                                 threshold=texture_thr, window_size=texture_window)
+            self.label_texture_seg.set_cv_image(texture_seg_img)
+            self._tab_image_map["Texture Segmentation"] = texture_seg_img
+        except Exception as e:
+            # If segmentation fails, show error message
+            error_img = np.zeros((h, w, 3), dtype=np.uint8)
+            self.label_texture_seg.set_cv_image(error_img)
+            self._tab_image_map["Texture Segmentation"] = error_img
+
+    def _update_lab2_features(self, gray_hsv):
+        """Update Lab 2 features only when needed"""
+        # Hough Lines
+        adaptive_lines = bool(self.cb_hough_adaptive.isChecked()) if hasattr(self, 'cb_hough_adaptive') else True
+        hough_thr = int(self.sb_hough_thr.value()) if hasattr(self, 'sb_hough_thr') else 100
+        hough_min_len = int(self.sb_hough_min_len.value()) if hasattr(self, 'sb_hough_min_len') else 50
+        hough_max_gap = int(self.sb_hough_max_gap.value()) if hasattr(self, 'sb_hough_max_gap') else 10
+        hough_lines_img, _ = hough_lines(gray_hsv, threshold=hough_thr, 
+                                       min_line_length=hough_min_len, max_line_gap=hough_max_gap,
+                                       adaptive=adaptive_lines)
+        self.label_hough_lines.set_cv_image(hough_lines_img)
+        self._tab_image_map["Hough Lines"] = hough_lines_img
+
+        # Hough Circles
+        adaptive_circles = bool(self.cb_circle_adaptive.isChecked()) if hasattr(self, 'cb_circle_adaptive') else True
+        circle_dp = float(self.ds_circle_dp.value()) if hasattr(self, 'ds_circle_dp') else 1.0
+        circle_min_dist = int(self.sb_circle_min_dist.value()) if hasattr(self, 'sb_circle_min_dist') else 50
+        circle_param1 = int(self.sb_circle_param1.value()) if hasattr(self, 'sb_circle_param1') else 50
+        circle_param2 = int(self.sb_circle_param2.value()) if hasattr(self, 'sb_circle_param2') else 30
+        hough_circles_img, _ = hough_circles(gray_hsv, dp=circle_dp, min_dist=circle_min_dist,
+                                           param1=circle_param1, param2=circle_param2, adaptive=adaptive_circles)
+        self.label_hough_circles.set_cv_image(hough_circles_img)
+        self._tab_image_map["Hough Circles"] = hough_circles_img
+
+        # Local Statistics
+        local_window = int(self.sb_local_window.value()) if hasattr(self, 'sb_local_window') else 15
+        local_mean, local_var, local_skew, local_kurt = local_statistics(gray_hsv, window_size=local_window)
+        self.label_local_mean.set_cv_image(local_mean)
+        self._tab_image_map["Local Statistics — Mean"] = local_mean
+        self.label_local_var.set_cv_image(local_var)
+        self._tab_image_map["Local Statistics — Variance"] = local_var
+        self.label_local_skew.set_cv_image(local_skew)
+        self._tab_image_map["Local Statistics — Skewness"] = local_skew
+        self.label_local_kurt.set_cv_image(local_kurt)
+        self._tab_image_map["Local Statistics — Kurtosis"] = local_kurt
+
+        # Texture Segmentation
+        texture_thr = int(self.sb_texture_thr.value()) if hasattr(self, 'sb_texture_thr') else 30
+        texture_window = int(self.sb_texture_window.value()) if hasattr(self, 'sb_texture_window') else 15
+        seed_x = int(self.sb_seed_x.value()) if hasattr(self, 'sb_seed_x') else 100
+        seed_y = int(self.sb_seed_y.value()) if hasattr(self, 'sb_seed_y') else 100
+        
+        # Ensure seed point is within image bounds
+        h, w = gray_hsv.shape[:2]
+        seed_x = max(0, min(w-1, seed_x))
+        seed_y = max(0, min(h-1, seed_y))
+        
+        try:
+            texture_seg_img = texture_segmentation(gray_hsv, seed_point=(seed_y, seed_x), 
+                                                 threshold=texture_thr, window_size=texture_window)
+            self.label_texture_seg.set_cv_image(texture_seg_img)
+            self._tab_image_map["Texture Segmentation"] = texture_seg_img
+        except Exception as e:
+            # If segmentation fails, show error message
+            error_img = np.zeros((h, w, 3), dtype=np.uint8)
+            self.label_texture_seg.set_cv_image(error_img)
+            self._tab_image_map["Texture Segmentation"] = error_img
 
 def run():
     app = QApplication(sys.argv)
