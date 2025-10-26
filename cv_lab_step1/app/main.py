@@ -40,8 +40,10 @@ from .image_ops import (
     hist_normalize, hist_equalize, hist_contrast_stretch,
     gaussian_blur, laplacian_sharpen, sobel_edges,
     cyclic_shift, rotate_about_center,
-    hough_lines, hough_circles, local_statistics, texture_segmentation,
 )
+from .hough import hough_lines, hough_circles, calculate_adaptive_hough_params
+from .stats import local_statistics
+from .texture import texture_segmentation
 from .qt_image import cv_to_qpixmap
 
 class ImageLabel(QLabel):
@@ -810,8 +812,8 @@ class MainWindow(QMainWindow):
         if self.cb_hough_adaptive.isChecked():
             # Calculate adaptive parameters
             gray_hsv = self._gray_hsv if self._gray_hsv is not None else to_gray_hsv_value(self._bgr_image)
-            from .image_ops import _calculate_adaptive_hough_params
-            adaptive_params = _calculate_adaptive_hough_params(gray_hsv)
+            from .hough import calculate_adaptive_hough_params
+            adaptive_params = calculate_adaptive_hough_params(gray_hsv)
             
             # Update UI with adaptive values
             self.sb_hough_thr.setValue(adaptive_params['line_threshold'])
@@ -828,8 +830,8 @@ class MainWindow(QMainWindow):
         if self.cb_circle_adaptive.isChecked():
             # Calculate adaptive parameters
             gray_hsv = self._gray_hsv if self._gray_hsv is not None else to_gray_hsv_value(self._bgr_image)
-            from .image_ops import _calculate_adaptive_hough_params
-            adaptive_params = _calculate_adaptive_hough_params(gray_hsv)
+            from .hough import calculate_adaptive_hough_params
+            adaptive_params = calculate_adaptive_hough_params(gray_hsv)
             
             # Update UI with adaptive values
             self.sb_circle_min_dist.setValue(adaptive_params['circle_min_dist'])
